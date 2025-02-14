@@ -11,14 +11,17 @@ env:
   ECR_REPOSITORY: demo-app
   ECS_CLUSTER: demo-cluster
   ECS_SERVICE: demo-service
+  CONTAINER_NAME: demo-app
 
 permissions:
   contents: read
   id-token: write
 
 jobs:
-  build-and-test:
+  build-and-deploy:
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
     steps:
     - uses: actions/checkout@v3
     
@@ -29,18 +32,8 @@ jobs:
         distribution: 'temurin'
         cache: 'maven'
         
-    - name: Build and Test
-      run: mvn clean package
-
-  deploy:
-    needs: build-and-test
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    outputs:
-      image: ${{ steps.build-image.outputs.image }}
-    
-    steps:
-    - uses: actions/checkout@v3
+    - name: Build with Maven
+      run: mvn clean package -DskipTests
     
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
@@ -52,43 +45,39 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v2
     
-    - name: Set up JDK 21
-      uses: actions/setup-java@v3
-      with:
-        java-version: '21'
-        distribution: 'temurin'
-        cache: 'maven'
-    
-    - name: Build with Maven
-      run: mvn clean package -DskipTests
-    
     - name: Build and push Docker image
       id: build-image
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
       run: |
+        # Construir imagen
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        
+        # Subir imágenes
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        
+        # Guardar la URI de la imagen
+        echo "IMAGE=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_ENV
     
-    - name: Download task definition
+    - name: Update ECS service
       run: |
-        aws ecs describe-task-definition --task-definition demo-app \
-        --query taskDefinition > task-definition.json
-    
-    - name: Fill in the new image ID in the Amazon ECS task definition
-      id: task-def
-      uses: aws-actions/amazon-ecs-render-task-definition@v1
-      with:
-        task-definition: task-definition.json
-        container-name: demo-app
-        image: ${{ steps.build-image.outputs.image }}
-    
-    - name: Deploy Amazon ECS task definition
-      uses: aws-actions/amazon-ecs-deploy-task-definition@v1
-      with:
-        task-definition: ${{ steps.task-def.outputs.task-definition }}
-        service: ${{ env.ECS_SERVICE }}
-        cluster: ${{ env.ECS_CLUSTER }}
-        wait-for-service-stability: true 
+        TASK_DEFINITION=$(aws ecs describe-task-definition \
+          --task-definition ${{ env.CONTAINER_NAME }} \
+          --query 'taskDefinition' \
+          --output json)
+        
+        NEW_TASK_DEFINITION=$(echo $TASK_DEFINITION | jq --arg IMAGE "${{ env.IMAGE }}" \
+          '.containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn) | del(.revision) | del(.status) | del(.requiresAttributes) | del(.compatibilities) | del(.registeredAt) | del(.registeredBy)')
+        
+        aws ecs register-task-definition \
+          --family ${{ env.CONTAINER_NAME }} \
+          --cli-input-json "$NEW_TASK_DEFINITION"
+        
+        aws ecs update-service \
+          --cluster ${{ env.ECS_CLUSTER }} \
+          --service ${{ env.ECS_SERVICE }} \
+          --task-definition ${{ env.CONTAINER_NAME }} \
+          --force-new-deployment 
