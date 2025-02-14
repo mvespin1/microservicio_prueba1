@@ -17,6 +17,23 @@ resource "aws_security_group" "rds" {
     to_port         = 5432
     protocol        = "tcp"
     security_groups = [aws_security_group.ecs_tasks.id]
+    description     = "Access from ECS tasks"
+  }
+
+  ingress {
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Access from anywhere for development"
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow all outbound traffic"
   }
 
   tags = {
@@ -34,6 +51,7 @@ resource "aws_db_instance" "demo" {
   username            = "postgres"
   password            = "demo123456"
   skip_final_snapshot = true
+  publicly_accessible = true
 
   db_subnet_group_name   = aws_db_subnet_group.demo.name
   vpc_security_group_ids = [aws_security_group.rds.id]
