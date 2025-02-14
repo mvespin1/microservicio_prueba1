@@ -50,7 +50,10 @@ resource "aws_iam_role_policy" "github_actions_additional" {
           "ecs:DescribeTaskDefinition",
           "ecs:DescribeServices",
           "ecs:UpdateService",
-          "ecs:RegisterTaskDefinition"
+          "ecs:RegisterTaskDefinition",
+          "ecs:ListTasks",
+          "ecs:DescribeTasks",
+          "iam:PassRole"
         ]
         Resource = "*"
       }
