@@ -21,7 +21,7 @@ import com.example.demo.service.LibroService;
 import lombok.RequiredArgsConstructor;
 
 @RestController
-@RequestMapping("/api/libros4")
+@RequestMapping("/api/libros5")
 @RequiredArgsConstructor
 public class LibroController {
 
